@@ -282,6 +282,7 @@ class SettingsService:
             "welcome_enabled": "1",
             "delivery_effect": "1",          # 🎉 party effect when a delivery completes
             "welcome_animation": "1",        # 🔥 fire effect on the /start welcome
+            "group_mode": "1",               # 1 = the bot also answers commands in group chats
             "help_message": "",              # empty = built-in help page
             "delete_notice": "",             # empty = built-in auto-delete notice
             "ask_new_message": "",           # empty = built-in "How many New videos?" prompt

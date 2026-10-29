@@ -76,7 +76,8 @@ class _Pacer:
             await asyncio.sleep(self.delay)
 
     def flood(self) -> None:
-        self.delay = min(1.0, max(self.delay * 2, 0.3))
+        # cap: 1 s for normal chats; for group pacing (base 3.2 s) never go below the base
+        self.delay = min(max(1.0, self.base * 2), max(self.delay * 2, 0.3, self.base))
         if self.chat_id is not None:
             if len(_FLOOD_MEMORY) > 2000:
                 _FLOOD_MEMORY.clear()
@@ -196,17 +197,27 @@ class DeliveryService:
             log.exception(what)
 
     async def deliver(self, user_id: int, chat_id: int, category: str, count: int,
-                      shuffle: bool = False, prepared: Prepared | None = None) -> DeliveryResult:
+                      shuffle: bool = False, prepared: Prepared | None = None,
+                      group: bool = False) -> DeliveryResult:
         """Send up to `count` videos this user has never received, in the order of their mode
         (`category` is the mode: new = newest -> oldest, old = oldest -> newest).
         Videos go out back to back, in order. Every sent video is written to
         user_video_history and queued for auto-deletion in the background, and the user's own
         session row (mode / position / progress) is advanced. Nothing is shared between
-        users. `prepared` = the result of `prepare()` when the caller already ran it."""
+        users. `prepared` = the result of `prepare()` when the caller already ran it.
+
+        `group=True` (the videos go into a group chat): the videos are always content-protected
+        (everybody in the group can see them) and are paced to stay under Telegram's limit of
+        about 20 messages per minute for one group, so the delivery is not aborted by flood
+        waits. A refusal to send is then the GROUP's problem, never the user's."""
         result = DeliveryResult()
         tried_ids: set[int] = set()
         sent_unique: set[str] = set()
-        pacer = _Pacer(getattr(self.cfg, "send_delay", 0.0), chat_id)
+        base_delay = float(getattr(self.cfg, "send_delay", 0.0) or 0.0)
+        if group:
+            base_delay = max(base_delay, float(getattr(self.cfg, "group_send_gap", 3.2) or 0.0))
+        pacer = _Pacer(base_delay, chat_id)
+        protect = self.protect_for(user_id, group=group)
         history = _History(self, user_id, chat_id, category)
         pause = float(getattr(self.cfg, "delivery_batch_pause", 0.0) or 0.0)
         every = max(1, int(getattr(self.cfg, "delivery_batch_size", 10) or 10))
@@ -235,7 +246,7 @@ class DeliveryService:
                             and video.telegram_file_unique_id in sent_unique):
                         continue
                     outcome, message_id = await self._send_one(
-                        chat_id, video, result.delivered + 1, self.protect_for(user_id), pacer)
+                        chat_id, video, result.delivered + 1, protect, pacer)
                     if outcome is None:  # user blocked the bot
                         result.blocked = True
                         break
@@ -252,8 +263,8 @@ class DeliveryService:
         finally:
             await history.close()   # everything that was sent is recorded, even on cancel
 
-        if result.blocked:
-            await self.users.mark_blocked(user_id)
+        if result.blocked and not group and chat_id == user_id:
+            await self.users.mark_blocked(user_id)   # only a private chat means "blocked the bot"
         await self._record(user_id, category, count, result, prepared.prevented, session_job)
         return result
 
@@ -308,13 +319,15 @@ class DeliveryService:
             self._quiet(self.users.refresh_delivery_lock(user_id), "lock_refresh_failed"),
         )
 
-    def protect_for(self, user_id: int) -> bool:
+    def protect_for(self, user_id: int, group: bool = False) -> bool:
         """Telegram content protection for the videos sent to ONE user: no forwarding, no saving
         or downloading from the chat. Every user is protected until an admin allows Save/Forward
         for that user (User Manager). The global switch in Bot Settings stays a master switch:
         if an admin turns it OFF, nobody is protected."""
         if self.settings is not None and not self.settings.flag("protect_content"):
             return False
+        if group:   # a group is a shared screen: a personal Save/Forward permission cannot apply
+            return True
         return self.users.protect_for(user_id)
 
     async def _record(self, user_id: int, category: str, count: int, r: DeliveryResult,

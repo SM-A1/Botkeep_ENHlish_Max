@@ -284,7 +284,7 @@ for _key, (_title, _icon, _slug, _max, _alert, _ph) in MESSAGES.items():
 
 # Switches an admin may flip, and the page code a switch was pressed on (to re-render it).
 TOGGLES = {"welcome_enabled", "welcome_animation", "delivery_effect", "keep_source_caption", "delete_notice_enabled",
-           "allow_duplicate_videos", "protect_content",
+           "allow_duplicate_videos", "protect_content", "group_mode",
            "maintenance_custom", *PUBLIC_BUTTONS}
 ORIGINS = {"s": "adm:set", "b": "adm:btns", "d": "adm:dev", "m": "adm:mnt",
            "w": "adm:pub:welcome", "n": "adm:pub:notice"}
@@ -1081,6 +1081,8 @@ class Panel(ForceSubPanelMixin, ReferralPanelMixin):
                 f"💬 Keep source caption: <b>{on_off(s.flag('keep_source_caption'))}</b>\n"
                 f"♻️ Send duplicate videos: <b>{on_off(s.flag('allow_duplicate_videos'))}</b>\n"
                 f"🔒 Protected videos (no forward/save): <b>{on_off(s.flag('protect_content'))}</b>\n"
+                f"👥 Group mode: <b>{on_off(s.flag('group_mode'))}</b> "
+                f"(max {c.group_max_videos} videos per request)\n"
                 f"✨ Remaining shown — New: <b>{rem_new}</b> • Old: <b>{rem_old}</b>\n"
                 f"🛠️ Maintenance: <b>{on_off(s.maintenance)}</b>")
         maint = (B(text="🛠️ Maintenance: ✅ ON → end", callback_data="adm:do:mntoff") if s.maintenance
@@ -1102,6 +1104,8 @@ class Panel(ForceSubPanelMixin, ReferralPanelMixin):
                callback_data="adm:tgl:allow_duplicate_videos:s")],
             [B(text=f"🔒 No forward/save: {on_off(s.flag('protect_content'))}",
                callback_data="adm:tgl:protect_content:s")],
+            [B(text=f"👥 Group mode: {on_off(s.flag('group_mode'))}",
+               callback_data="adm:tgl:group_mode:s")],
             [B(text=f"✨ Remaining New: {rem_new}", callback_data="adm:edit:remaining_new_display"),
              B(text=f"✨ Remaining Old: {rem_old}", callback_data="adm:edit:remaining_old_display")],
             [maint], back="adm:home")

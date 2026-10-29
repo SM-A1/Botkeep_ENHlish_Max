@@ -7,7 +7,7 @@ import ui
 from config import load_config
 from database import Database
 from force_subscribe import ForceSubscribeGate, load_force_sub_config, startup_check
-from handlers import admin, admin_panel, referral, start, user
+from handlers import admin, admin_panel, group, referral, start, user
 from logging_setup import log_event, setup_logging
 from middlewares import AccessGate, on_error
 from services.bridge_service import BridgeService
@@ -83,6 +83,7 @@ async def main() -> None:
     dp.include_router(admin.router)   # admin commands; must come before the generic text handler
     dp.include_router(start.router)
     dp.include_router(referral.router)   # /refer /stats /rewards (before the generic text handler)
+    dp.include_router(group.router)      # group chats: /video /new /old + owner-bound buttons
     dp.include_router(user.router)
 
     await bot.get_me()

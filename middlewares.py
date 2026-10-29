@@ -15,6 +15,7 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.types import (CallbackQuery, ErrorEvent, InlineKeyboardButton,
                            InlineKeyboardMarkup, Message, TelegramObject)
 
+import group_utils as gu
 import ui
 from config import Config
 from logging_setup import log_event
@@ -38,7 +39,7 @@ class AccessGate(BaseMiddleware):
             return await handler(event, data)
         if isinstance(event, Message):
             if event.chat.type != "private":
-                return await handler(event, data)
+                return await self._group_message(handler, event, data, user)
             if (event.text or "").lower().split("@")[0].split(" ")[0] == "/admin":
                 return await handler(event, data)    # answered with the permission notice
         if isinstance(event, CallbackQuery) and (event.data or "").startswith("adm:"):
@@ -71,13 +72,38 @@ class AccessGate(BaseMiddleware):
                 pass
         return None
 
+    async def _group_message(self, handler, event: Message, data, user):
+        """Group chats: only the commands the bot answers there are checked (everything else is
+        ignored further down anyway). Same rules as in private chats, but the refusal is a short,
+        self-deleting notice with an 'Open Bot' button: the 18+ confirmation and the contact
+        details can only be handled in a private chat."""
+        if user.is_bot or event.sender_chat is not None or not self.settings.flag("group_mode"):
+            return await handler(event, data)    # group mode OFF is answered by the group handler
+        me = await data["bot"].me()
+        if gu.group_command(event.text, me.username) is None:
+            return await handler(event, data)
+        banned = self.users.is_banned(user.id)
+        text = self._blocked_text(user.id)
+        open_bot = ui.group_open_bot_kb(me.username, payload="verify")
+        if text is None and not self.users.is_verified(user.id):
+            await gu.reply_notice(event, ui.group_age_text(), open_bot)
+            return None
+        if text is None:
+            self._touch_later(user.id)
+            return await handler(event, data)
+        await gu.reply_notice(event, text, self._contact_kb() if banned else open_bot)
+        return None
+
     async def _age_gate(self, handler, event, data):
         """Adults only: everything except the 18+ buttons asks for confirmation first."""
         if isinstance(event, CallbackQuery):
             if (event.data or "").startswith("age:"):
                 return await handler(event, data)
+            in_group = gu.is_group_chat(getattr(getattr(event, "message", None), "chat", None))
             try:
-                await event.answer("🔞 Please confirm you are 18+ first. Send /start", show_alert=True)
+                await event.answer("🔞 Please open the bot in a private chat and confirm you are 18+ first."
+                                   if in_group else
+                                   "🔞 Please confirm you are 18+ first. Send /start", show_alert=True)
             except TelegramAPIError:
                 pass
             return None

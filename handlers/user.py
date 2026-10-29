@@ -77,10 +77,13 @@ async def run_request(bot: Bot, users: UserService, delivery: DeliveryService,
                       videos: VideoService, cfg: Config, *, user_id: int, chat_id: int,
                       category: str, count: int, shuffle: bool = False,
                       cb: CallbackQuery | None = None, locked: bool = False,
-                      settings: SettingsService | None = None) -> None:
+                      settings: SettingsService | None = None,
+                      group: bool = False, bot_username: str | None = None) -> None:
     """Lock -> rate limit -> unseen check -> deliver -> completion message.
 
     `locked=True` means the caller already moved the user into the 'delivering' state.
+    `group=True` = the request comes from a group chat: owner-bound group keyboards, paced and
+    always-protected delivery, no message effects (see handlers/group.py).
     Everything before the first video runs in parallel (rate limit, unseen videos, button
     answer, status message): the first video leaves as soon as the slowest of them is done."""
     if not locked and not await users.acquire_delivery_lock(user_id):
@@ -127,7 +130,11 @@ async def run_request(bot: Bot, users: UserService, delivery: DeliveryService,
             log_event(log, logging.INFO, "library_empty" if empty else "category_exhausted",
                       user_id=user_id, category=category)
             text = ui.empty_text() if empty else ui.exhausted_text(category, bool(other_left))
-            kb = ui.try_other_kb(category, count) if other_left else ui.finished_kb()
+            if group:
+                kb = (ui.group_try_other_kb(user_id, category, count) if other_left
+                      else ui.group_finished_kb(user_id))
+            else:
+                kb = ui.try_other_kb(category, count) if other_left else ui.finished_kb()
             await _edit(status, text, kb)
             if status is None:
                 await _say(bot, chat_id, text, kb)
@@ -148,7 +155,7 @@ async def run_request(bot: Bot, users: UserService, delivery: DeliveryService,
         log_event(log, logging.INFO, "delivery_started", user_id=user_id, category=category,
                   requested=count, available=unseen, shuffle=shuffle)
         result = await delivery.deliver(user_id, chat_id, category, n, shuffle=shuffle,
-                                        prepared=prepared)
+                                        prepared=prepared, group=group)
         if side:
             await asyncio.gather(*side, return_exceptions=True)   # long done; keeps edit < delete
 
@@ -164,14 +171,27 @@ async def run_request(bot: Bot, users: UserService, delivery: DeliveryService,
             if result.blocked:
                 return
             if result.delivered == 0:
-                await _say(bot, chat_id, ui.failed_text(), ui.retry_kb(category, count))
+                retry = (ui.group_retry_kb(user_id, category, count) if group
+                         else ui.retry_kb(category, count))
+                await _say(bot, chat_id, ui.failed_text(), retry)
                 return
-            kb = (ui.after_delivery_kb(category, count, settings) if not short_of
-                  else ui.finished_kb())
+            if group:
+                kb = (ui.group_after_kb(user_id, category, count, bot_username, settings)
+                      if not short_of else ui.group_finished_kb(user_id))
+            else:
+                kb = (ui.after_delivery_kb(category, count, settings) if not short_of
+                      else ui.finished_kb())
             await _say(bot, chat_id,
                        ui.delivered_text(cfg, result.delivered, category, short_of,
-                                         protected=delivery.protect_for(user_id)), kb,
-                       effect=effects.PARTY if settings.flag("delivery_effect") else None)
+                                         protected=delivery.protect_for(user_id, group=group)),
+                       kb,
+                       effect=(effects.PARTY if settings.flag("delivery_effect") and not group
+                               else None))   # message effects only exist in private chats
+
+        if group and result.blocked:
+            # Telegram refused to post into the group (media not allowed / bot restricted).
+            # Say so in the group instead of leaving the "preparing" message hanging.
+            await _edit(status, ui.group_no_rights_text(), ui.group_finished_kb(user_id))
 
         cleared = True
         await asyncio.gather(users.clear_state(user_id),
@@ -181,7 +201,9 @@ async def run_request(bot: Bot, users: UserService, delivery: DeliveryService,
         log.exception("delivery_crashed")
         if delivery.events is not None:
             await delivery.events.record("error", f"Delivery crashed: {type(exc).__name__}", user_id)
-        await _say(bot, chat_id, ui.error_text(), ui.retry_kb(category, count))
+        await _say(bot, chat_id, ui.error_text(),
+                   ui.group_retry_kb(user_id, category, count) if group
+                   else ui.retry_kb(category, count))
     finally:
         if not cleared:
             await users.clear_state(user_id)

@@ -235,3 +235,63 @@ Optional environment variables (all have fast defaults):
 | `DELIVERY_BATCH_PAUSE` | `0` | Extra pause after every `Delivery batch size` videos (seconds). |
 | `GLOBAL_SEND_RATE` | `25` | Bot-wide cap of sends per second (Telegram allows about 30). `0` = off. |
 | `DB_POOL_MIN` | `4` | Warm database connections (a cold connection to a remote Supabase costs 200-400 ms). |
+
+## Group chats (Group mode)
+
+The bot now answers inside groups and supergroups as well as in private chat.
+
+### Commands in a group
+
+| Command | What it does |
+|---|---|
+| `/video` | Shows quantity buttons, then the collection (New Drops / Classic Vault) |
+| `/video 5` | Quick request: asks only for the collection |
+| `/new 5` · `/old 5` | Delivers 5 newest / older videos straight away |
+| `/start` · `/menu` · `/help` | Short help with an **Open Bot** button |
+
+Anything else in a group is ignored, so normal conversation is never touched. Commands addressed
+to another bot (`/video@OtherBot`) are ignored too.
+
+### How it behaves
+
+- **Same rules as private chat.** Banned users, bot OFF / maintenance, the 18+ confirmation and
+  Force Subscribe are all enforced for group commands. A refusal is a short notice that deletes
+  itself after a few seconds, with an **Open Bot** button (the 18+ confirmation and joining the
+  channel are done once in the private chat).
+- **Your own history.** Each member's unique-video history is shared with private chat: nobody
+  gets the same video twice, and nobody sees another member's progress.
+- **Owner-bound buttons.** Every button belongs to the member who opened the menu; other members
+  get a pop-up and nothing happens.
+- **Always protected.** Videos sent into a group are content-protected (no forward / save) because
+  the whole group can see them. A member's personal Save/Forward permission does not apply in
+  groups. The global *No forward/save* switch in Bot Settings still works as a master switch.
+- **Paced for Telegram's group limit.** Telegram allows a bot only about 20 messages per minute in
+  one group, so group deliveries are limited to `GROUP_MAX_VIDEOS` and spaced by `GROUP_SEND_GAP`
+  seconds, and only **one delivery runs per group at a time** (a second request gets a "please try
+  again in a moment" notice).
+- **Auto-delete** works exactly as in private chat (restart-safe, from the database).
+- Adding / removing the bot is written to the admin **Logs**, and the bot greets a group it joins.
+
+### Admin switch
+
+Admin Panel → ⚙️ Bot Settings → **👥 Group mode** (ON by default). When OFF the bot answers
+group commands with "not available in groups".
+
+### Setup in BotFather (one time)
+
+1. `/mybots` → your bot → **Bot Settings → Allow Groups?** → **Turn on**.
+2. Leave **Group Privacy** ON (default). Commands and replies still reach the bot; nothing else is read.
+3. Optional: **Edit Commands** and add `video`, `new`, `old`, `help` so members see them in the `/` menu.
+4. Add the bot to the group and make it an **admin** (it needs to send media and to delete its own messages).
+
+### Environment variables (optional)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `GROUP_MAX_VIDEOS` | `10` | Largest request a member can make in a group (never above `MAX_VIDEOS_PER_REQUEST`). |
+| `GROUP_SEND_GAP` | `3.2` | Seconds between two videos sent into one group (keeps under ~20 messages/minute). |
+
+### Tests
+
+`python tests/test_group.py` checks command parsing, request sizes and the owner-bound callback data
+(no network, no aiogram needed).

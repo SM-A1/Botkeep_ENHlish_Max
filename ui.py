@@ -582,3 +582,125 @@ AGE_DENIED = "⛔ Sorry, you must be 18 or older to use this bot."
 def age_kb() -> Kb:
     return Kb(inline_keyboard=[[Btn("✅  I am 18+", style="success", callback_data="age:yes"),
                                 Btn("❌  Under 18", style="danger", callback_data="age:no")]])
+
+
+# ---------------------------------------------------------------- group chats
+# Compact texts and OWNER-BOUND keyboards: every button carries the id of the member who opened
+# the menu, so nobody else in the group can press it (see group_utils / handlers/group.py).
+import group_utils as _g   # noqa: E402 - kept next to the code that uses it
+
+
+def group_help_text(cfg: Config, max_videos: int) -> str:
+    return (f"🎬 <b>{BRAND}</b>\n{LINE}\n\n"
+            "<b>Commands</b>\n"
+            "▶️ <code>/video</code> › choose how many videos\n"
+            f"⚡ <code>/video 5</code> › quick request (1–{max_videos})\n"
+            f"🆕 <code>/new 5</code> › newest videos\n"
+            f"📦 <code>/old 5</code> › older videos\n\n"
+            f"⏱️ Videos are removed after {fmt_duration(cfg.auto_delete_seconds)}\n"
+            "🔒 Your history is private: you never get the same video twice.\n\n"
+            "💬 Open the bot in private chat for the full menu.")
+
+
+def group_ask_count_text(user_id: int, name: str | None, max_videos: int) -> str:
+    return (f"🎬 {_g.mention(user_id, name)}, how many videos do you want?\n\n"
+            f"Tap a number below or send <code>/video 7</code> (1–{max_videos}).")
+
+
+def group_choose_text(user_id: int, name: str | None, count: int) -> str:
+    return (f"🎬 {_g.mention(user_id, name)}, pick a collection for "
+            f"<b>{count} {videos_word(count)}</b>:\n\n"
+            "🆕 <b>New</b> › latest unique videos\n"
+            "📦 <b>Old</b> › older unique videos")
+
+
+def group_age_text() -> str:
+    return ("🔞 <b>Adults only</b>\n\n"
+            "Please open the bot in a private chat and confirm that you are 18+ once. "
+            "After that you can use it here too.")
+
+
+def group_busy_chat_text() -> str:
+    return "⏳ A delivery is already running in this group. Please try again in a moment."
+
+
+def group_not_owner_text() -> str:
+    return "This menu belongs to another member. Send /video to open your own."
+
+
+def group_disabled_text() -> str:
+    return "ℹ️ The bot is not available in groups right now. Please use it in a private chat."
+
+
+def group_no_rights_text() -> str:
+    return ("⚠️ I cannot send videos in this group. Please make sure I am allowed to send media "
+            "(or make me an admin).")
+
+
+def group_welcome_text(max_videos: int) -> str:
+    return (f"👋 <b>Thanks for adding {BRAND}!</b>\n{LINE}\n\n"
+            f"Send <code>/video</code> to get unique videos (up to {max_videos} per request).\n"
+            "Send /help to see every command.\n\n"
+            "💡 <i>Tip: make me an admin so I can send media and clean up after myself.</i>")
+
+
+def group_open_bot_kb(bot_username: str | None, label: str = "🤖  Open Bot",
+                      payload: str = "") -> Kb | None:
+    url = _g.deep_link(bot_username, payload)
+    if not url:
+        return None
+    return Kb(inline_keyboard=[[Btn(label, style="primary", url=url)]])
+
+
+def group_quantity_kb(cfg: Config, uid: int, max_videos: int) -> Kb:
+    picks = [n for n in (3, 5, 10) if n <= max_videos] or [max_videos]
+    if max_videos not in picks and max_videos < 10:
+        picks.append(max_videos)
+    rows = [[Btn(f"⚡ {n}", callback_data=_g.cb_quantity(uid, n)) for n in picks[:4]],
+            [Btn("✖️  Close", callback_data=_g.cb_close(uid))]]
+    return Kb(inline_keyboard=rows)
+
+
+def group_collection_kb(uid: int, count: int) -> Kb:
+    return Kb(inline_keyboard=[
+        [Btn("🆕  New Drops", style="success", callback_data=_g.cb_deliver(uid, "new", count)),
+         Btn("📦  Classic Vault", callback_data=_g.cb_deliver(uid, "old", count))],
+        [Btn("✖️  Close", callback_data=_g.cb_close(uid))],
+    ])
+
+
+def group_after_kb(uid: int, category: str, count: int, bot_username: str | None,
+                   s: SettingsService | None = None) -> Kb:
+    rows: list[list[Btn]] = []
+    if s is None or s.button_on("btn_more"):
+        rows.append([Btn(f"🔥  {count} More New", style="success",
+                         callback_data=_g.cb_deliver(uid, "new", count)),
+                     Btn(f"♻️  {count} More Old",
+                         callback_data=_g.cb_deliver(uid, "old", count))])
+        rows.append([Btn("🎲  Surprise Me  ·  Shuffled Batch", style="primary",
+                         callback_data=_g.cb_deliver(uid, category, count, shuffle=True))])
+    last = []
+    link = _g.deep_link(bot_username)
+    if link:
+        last.append(Btn("🤖  Open Bot", url=link))
+    last.append(Btn("✖️  Close", callback_data=_g.cb_close(uid)))
+    rows.append(last)
+    return Kb(inline_keyboard=rows)
+
+
+def group_try_other_kb(uid: int, category: str, count: int) -> Kb:
+    o = other(category)
+    label = "📦  Try Classic Vault" if o == "old" else "🆕  Try New Drops"
+    return Kb(inline_keyboard=[[Btn(label, style="primary",
+                                    callback_data=_g.cb_deliver(uid, o, count)),
+                                Btn("✖️  Close", callback_data=_g.cb_close(uid))]])
+
+
+def group_finished_kb(uid: int) -> Kb:
+    return Kb(inline_keyboard=[[Btn("✖️  Close", callback_data=_g.cb_close(uid))]])
+
+
+def group_retry_kb(uid: int, category: str, count: int) -> Kb:
+    return Kb(inline_keyboard=[[Btn("🔁  Try Again", style="primary",
+                                    callback_data=_g.cb_deliver(uid, category, count)),
+                                Btn("✖️  Close", callback_data=_g.cb_close(uid))]])

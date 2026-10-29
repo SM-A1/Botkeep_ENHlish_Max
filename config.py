@@ -137,6 +137,10 @@ class Config:   # mutable on purpose: SettingsService applies the admin's saved 
     delivery_batch_size: int = 10      # a short breather after every N videos (see delivery_batch_pause)
     delivery_batch_pause: float = 0.0  # seconds of that breather; 0 = none (full speed, the default)
     global_send_rate: float = 25.0     # bot-wide cap of sends per second (Telegram allows ~30)
+    # --- Group chats. Telegram lets a bot send only ~20 messages/minute into ONE group, so group
+    # deliveries are smaller and paced (a flood wait would otherwise abort them half way). ---
+    group_max_videos: int = 10         # largest request a member can make inside a group
+    group_send_gap: float = 3.2        # seconds between two videos sent into the same group
 
     @property
     def source_channel_id(self) -> int | None:   # the primary (first) channel
@@ -222,4 +226,6 @@ def load_config() -> Config:
         delivery_batch_size=min(50, max(1, _int("DELIVERY_BATCH_SIZE", 10))),
         delivery_batch_pause=max(0.0, _float("DELIVERY_BATCH_PAUSE", 0.0)),
         global_send_rate=max(0.0, _float("GLOBAL_SEND_RATE", 25.0)),
+        group_max_videos=max(1, _int("GROUP_MAX_VIDEOS", 10)),
+        group_send_gap=max(0.0, _float("GROUP_SEND_GAP", 3.2)),
     )

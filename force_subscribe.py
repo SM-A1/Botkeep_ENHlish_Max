@@ -39,6 +39,8 @@ from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 from aiogram.types import (CallbackQuery, InlineKeyboardButton as Btn,
                            InlineKeyboardMarkup as Kb, Message, TelegramObject)
 
+import group_utils as gu
+
 import ui
 from config import Config
 from services.force_sub_service import Channel, ForceSubService
@@ -217,6 +219,11 @@ def restricted_kb(kind: str, pairs: list[tuple[Channel, bool | None]]) -> Kb:
 
 
 # ------------------------------------------------------------------ middleware
+GROUP_BLOCK_TEXT = ("🔒 <b>Channel membership required</b>\n\n"
+                    "Please join our channel and verify in a private chat with the bot. "
+                    "After that you can use it here too.")
+
+
 class ForceSubscribeGate(BaseMiddleware):
     def __init__(self, cfg: Config, settings: SettingsService, users: UserService,
                  fs: ForceSubConfig, service: ForceSubService) -> None:
@@ -255,11 +262,14 @@ class ForceSubscribeGate(BaseMiddleware):
             return await handler(event, data)
         if isinstance(event, Message):
             if event.chat.type != "private":
-                return await handler(event, data)
+                return await self._group_message(handler, event, data, user, bot, channels)
             if (event.text or "").lower().split("@")[0].split(" ")[0] == "/admin":
                 return await handler(event, data)      # answered with the permission notice
         if isinstance(event, CallbackQuery) and (event.data or "").startswith("adm:"):
             return await handler(event, data)          # rejected by the admin-callback guard
+        if isinstance(event, CallbackQuery) and gu.is_group_chat(
+                getattr(event.message, "chat", None)):
+            return await self._group_button(handler, event, data, user, bot, channels)
 
         overall, pairs = await check_all(bot, channels, user.id)
         if overall is True:
@@ -272,6 +282,38 @@ class ForceSubscribeGate(BaseMiddleware):
         else:
             kind = "error"
         await self._block(event, kind, pairs)
+        return None
+
+    # -- group chats -------------------------------------------------------
+    async def _group_message(self, handler, event: Message, data, user, bot: Bot,
+                             channels: list[Channel]) -> Any:
+        """A command in a group: same live membership check as in private. A refusal is a short
+        self-deleting notice with an 'Open Bot' button (joining + verifying happens in private)."""
+        if event.sender_chat is not None:
+            return await handler(event, data)
+        me = await bot.me()
+        if gu.group_command(event.text, me.username) is None:
+            return await handler(event, data)          # not a bot command: ignored downstream
+        overall, _pairs = await check_all(bot, channels, user.id)
+        if overall is True:
+            self._remember(user.id, channels)
+            return await handler(event, data)
+        self._passed.pop(user.id, None)
+        await gu.reply_notice(event, GROUP_BLOCK_TEXT,
+                              ui.group_open_bot_kb(me.username, payload="join"))
+        return None
+
+    async def _group_button(self, handler, event: CallbackQuery, data, user, bot: Bot,
+                            channels: list[Channel]) -> Any:
+        """A button in a group: check membership; a refusal is a pop-up only (the group message is
+        never edited into the private 'join the channel' screen)."""
+        overall, _pairs = await check_all(bot, channels, user.id)
+        if overall is True:
+            self._remember(user.id, channels)
+            return await handler(event, data)
+        self._passed.pop(user.id, None)
+        await self._safe_answer(event, "🔒 Join the channel and verify in the bot's private chat "
+                                       "to continue.", alert=True)
         return None
 
     # -- verify button -----------------------------------------------------
